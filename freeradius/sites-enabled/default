@@ -1,0 +1,113 @@
+# ============================================================
+# FreeRADIUS - Default Virtual Server
+# ============================================================
+# This is a SIMPLIFIED version of the default site config.
+# We removed everything we don't need, and added the "rest"
+# module in the authorize, authenticate, and accounting sections.
+#
+# HOW IT WORKS (the request flow):
+#   1. A RADIUS packet arrives (e.g. from a switch)
+#   2. authorize {} runs  → figures out WHO the user is and HOW to check them
+#   3. authenticate {} runs → verifies the password
+#   4. post-auth {} runs   → final steps after auth decision
+#   5. accounting {} runs  → logs session start/stop (separate packets)
+# ============================================================
+
+server default {
+
+    # ── Listen for Authentication packets on port 1812 ───
+    listen {
+        type = auth
+        ipaddr = *
+        port = 0
+    }
+
+    # ── Listen for Accounting packets on port 1813 ───────
+    listen {
+        ipaddr = *
+        port = 0
+        type = acct
+    }
+
+    # ════════════════════════════════════════════════════════
+    # AUTHORIZE section
+    # ════════════════════════════════════════════════════════
+    # Runs BEFORE authentication. Its job is to:
+    #   1. Clean up the request (preprocess)
+    #   2. Find the user's "known good" password or set Auth-Type
+    #   3. Fetch policy attributes (VLAN, etc.)
+    #
+    authorize {
+        # Clean up weird attributes from some NAS devices
+        preprocess
+
+        # Call our FastAPI /authorize endpoint.
+        # This fetches the user's group and VLAN attributes.
+        rest
+
+        # If the user sent a plain-text password (PAP), and no other
+        # module has claimed Auth-Type, then set Auth-Type = rest.
+        # WHY: This tells FreeRADIUS "use the rest module to verify
+        # the password" in the authenticate section below.
+        if (!control:Auth-Type) {
+            update control {
+                &Auth-Type := rest
+            }
+        }
+    }
+
+    # ════════════════════════════════════════════════════════
+    # AUTHENTICATE section
+    # ════════════════════════════════════════════════════════
+    # Runs the actual password check. The Auth-Type set above
+    # determines which sub-section runs.
+    #
+    authenticate {
+        # When Auth-Type is "rest", call our FastAPI /auth endpoint.
+        # It checks the username + password against the database.
+        Auth-Type rest {
+            rest
+        }
+    }
+
+    # ════════════════════════════════════════════════════════
+    # PREACCT section
+    # ════════════════════════════════════════════════════════
+    # Runs before accounting. Cleans up the accounting request.
+    #
+    preacct {
+        preprocess
+        acct_unique
+    }
+
+    # ════════════════════════════════════════════════════════
+    # ACCOUNTING section
+    # ════════════════════════════════════════════════════════
+    # Logs session events (start, interim-update, stop).
+    # We send all of this to our FastAPI /accounting endpoint,
+    # which saves it to PostgreSQL and caches it in Redis.
+    #
+    accounting {
+        # Write a local detail log file as a backup record
+        # WHY: If our API is down, we still have a local log of
+        # every accounting packet that came in.
+        detail
+
+        # Send accounting data to our FastAPI /accounting endpoint
+        rest
+    }
+
+    # ════════════════════════════════════════════════════════
+    # POST-AUTH section
+    # ════════════════════════════════════════════════════════
+    # Runs after authentication succeeds or fails.
+    # We keep it minimal — just handle session state for EAP.
+    #
+    post-auth {
+        # Copy session-state attributes into the reply
+        # (needed for multi-round EAP conversations)
+        update {
+            &reply: += &session-state:
+        }
+    }
+}

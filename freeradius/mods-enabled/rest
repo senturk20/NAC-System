@@ -1,0 +1,65 @@
+# ============================================================
+# rlm_rest - REST Module Configuration
+# ============================================================
+# WHY: This module makes FreeRADIUS call our FastAPI endpoints
+# for authentication, authorization, and accounting decisions.
+# Instead of FreeRADIUS querying the database directly, it
+# asks our API: "Should this user be allowed in? What VLAN?"
+# ============================================================
+
+rest {
+    # Connect to our FastAPI container by its Docker service name
+    connect_uri = "http://api:8000"
+
+    # ── AUTHORIZE ────────────────────────────────────────
+    # Called when FreeRADIUS needs to know: "What policy applies to this user?"
+    # We send the username, and our API returns VLAN attributes.
+    authorize {
+        uri = "${..connect_uri}/authorize"
+        method = 'post'
+        body = 'post'
+        # Send username as a form field so our FastAPI can read it
+        data = "username=%{User-Name}"
+        force_to = 'json'
+    }
+
+    # ── AUTHENTICATE ─────────────────────────────────────
+    # Called when FreeRADIUS needs to verify: "Is this password correct?"
+    # We send username + password, and our API checks the hash.
+    # Our API returns HTTP 204 (accept) or 401 (reject) — no body to parse.
+    authenticate {
+        uri = "${..connect_uri}/auth"
+        method = 'post'
+        body = 'post'
+        data = "username=%{User-Name}&password=%{User-Password}"
+        force_to = 'plain'
+    }
+
+    # ── ACCOUNTING ───────────────────────────────────────
+    # Called when a session starts, updates, or stops.
+    # We send all the session details to our API for logging.
+    # WHY force_to = 'plain': Our API returns a simple status message,
+    # NOT RADIUS attributes. Using 'json' here would make rlm_rest
+    # try to parse "status" as a RADIUS attribute, which fails and
+    # silently kills the entire accounting call.
+    accounting {
+        uri = "${..connect_uri}/accounting"
+        method = 'post'
+        body = 'post'
+        data = "username=%{User-Name}&Acct-Status-Type=%{Acct-Status-Type}&Acct-Session-Id=%{Acct-Session-Id}&Acct-Unique-Session-Id=%{Acct-Unique-Session-Id}&NAS-IP-Address=%{NAS-IP-Address}&NAS-Port-Id=%{%{NAS-Port-Id}:-none}&Framed-IP-Address=%{%{Framed-IP-Address}:-0.0.0.0}&Calling-Station-Id=%{%{Calling-Station-Id}:-unknown}&Acct-Session-Time=%{%{Acct-Session-Time}:-0}&Acct-Input-Octets=%{%{Acct-Input-Octets}:-0}&Acct-Output-Octets=%{%{Acct-Output-Octets}:-0}&Acct-Terminate-Cause=%{%{Acct-Terminate-Cause}:-NAS-Reboot}"
+        force_to = 'plain'
+    }
+
+    # ── CONNECTION POOL ──────────────────────────────────
+    # Reuse HTTP connections to our API instead of opening a new one per request
+    pool {
+        start = 0
+        min = 1
+        max = 16
+        spare = 1
+        uses = 0
+        retry_delay = 30
+        lifetime = 0
+        idle_timeout = 60
+    }
+}
