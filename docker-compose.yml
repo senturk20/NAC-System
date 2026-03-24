@@ -1,0 +1,119 @@
+# ============================================================
+# NACSystem - Docker Compose
+# ============================================================
+# Brings up all services for our Network Access Control system:
+#   - PostgreSQL  : stores users, devices, policies, and accounting logs
+#   - Redis       : caches sessions and short-lived auth tokens
+#   - FreeRADIUS  : handles RADIUS Authentication, Authorization, Accounting
+#   - API         : FastAPI policy engine that FreeRADIUS calls for decisions
+# ============================================================
+
+services:
+
+  # ── PostgreSQL ───────────────────────────────────────────
+  postgres:
+    image: postgres:18-alpine
+    container_name: nac-postgres
+    restart: unless-stopped
+    env_file: .env                      # pulls POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB
+    ports:
+      - "5432:5432"                     # expose for local dev tools (e.g. pgAdmin, DBeaver)
+    volumes:
+      - pg_data:/var/lib/postgresql/data               # persist database between restarts
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql  # auto-run on first start
+    healthcheck:
+      # pg_isready checks if PostgreSQL is accepting connections
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nac-network
+
+  # ── Redis ────────────────────────────────────────────────
+  redis:
+    image: redis:8-alpine
+    container_name: nac-redis
+    restart: unless-stopped
+    # Start Redis with password authentication enabled
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    ports:
+      - "6379:6379"                     # expose for local dev tools (e.g. RedisInsight)
+    volumes:
+      - redis_data:/data                # persist cached data between restarts
+    healthcheck:
+      # Send a PING command using the password; expect PONG back
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nac-network
+
+  # ── FreeRADIUS ───────────────────────────────────────────
+  freeradius:
+    build:
+      context: ./freeradius            # Dockerfile copies configs with secure permissions
+      dockerfile: Dockerfile
+    container_name: nac-freeradius
+    restart: unless-stopped
+    # Run in debug mode (-X) so we can see every RADIUS packet in the logs
+    command: radiusd -X
+    ports:
+      - "1812:1812/udp"                # RADIUS Authentication
+      - "1813:1813/udp"                # RADIUS Accounting
+    depends_on:
+      postgres:
+        condition: service_healthy      # wait until PostgreSQL is ready
+      redis:
+        condition: service_healthy      # wait until Redis is ready
+    healthcheck:
+      # Send a test auth request to ourselves using radclient.
+      # If radiusd responds (Accept or Reject), the server is alive.
+      # WHY not pgrep: pgrep is not installed in the Alpine-based image.
+      test: ["CMD-SHELL", "echo 'User-Name=healthcheck' | radclient -t 2 127.0.0.1:1812 auth testing123 2>&1 | grep -q 'Received'"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - nac-network
+
+  # ── FastAPI Policy Engine ────────────────────────────────
+  api:
+    build:
+      context: ./api                    # Dockerfile lives inside the api/ folder
+      dockerfile: Dockerfile
+    container_name: nac-api
+    restart: unless-stopped
+    env_file: .env                      # pulls DATABASE_URL, REDIS_URL, API_SECRET_KEY
+    ports:
+      - "8000:8000"                     # FastAPI default port
+    volumes:
+      - ./api:/app                      # mount source code for live-reload during development
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # Hit the FastAPI health endpoint to confirm it's alive
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    networks:
+      - nac-network
+
+# ── Shared Network ───────────────────────────────────────
+# All services join this network so they can reach each other by container name
+# (e.g. the API can connect to "postgres:5432" instead of an IP address)
+networks:
+  nac-network:
+    driver: bridge
+
+# ── Persistent Volumes ───────────────────────────────────
+# Named volumes survive "docker compose down" so data is not lost
+volumes:
+  pg_data:
+  redis_data:
