@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NACSystem - Security Dashboard</title>
+    <!-- Bootstrap 5.3 with built-in dark mode support -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+          rel="stylesheet">
+    <!-- Bootstrap Icons for visual polish -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"
+          rel="stylesheet">
+    <style>
+        /* ── Base ─────────────────────────────────────────── */
+        body {
+            background: linear-gradient(135deg, #0f1117 0%, #1a1e2e 50%, #0f1117 100%);
+            min-height: 100vh;
+        }
+
+        /* ── Header bar ──────────────────────────────────── */
+        .header-bar {
+            background: linear-gradient(90deg, #161b26, #1c2333);
+            border-bottom: 1px solid rgba(99, 179, 237, 0.15);
+            padding: 1rem 0;
+        }
+        .header-bar .brand {
+            font-size: 1.4rem;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
+        .header-bar .brand i {
+            color: #63b3ed;
+        }
+        .header-bar .subtitle {
+            color: #8892a4;
+            font-size: 0.85rem;
+        }
+
+        /* ── Stat cards ──────────────────────────────────── */
+        .stat-card {
+            background: linear-gradient(145deg, #1e2435, #252b3b);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 12px;
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
+        }
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+        }
+        .stat-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.3rem;
+        }
+        .stat-number {
+            font-size: 2rem;
+            font-weight: 700;
+            line-height: 1.1;
+        }
+        .stat-label {
+            color: #8892a4;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* ── Section panels ──────────────────────────────── */
+        .panel {
+            background: linear-gradient(145deg, #1e2435, #252b3b);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 12px;
+        }
+        .panel-title {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #c9d1d9;
+        }
+        .panel-title i {
+            color: #63b3ed;
+        }
+
+        /* ── Tables ──────────────────────────────────────── */
+        .table {
+            margin-bottom: 0;
+            color: #c9d1d9;
+        }
+        .table thead th {
+            background: rgba(0, 0, 0, 0.2);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            color: #8892a4;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+            padding: 0.75rem 1rem;
+        }
+        .table tbody td {
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+            padding: 0.7rem 1rem;
+            vertical-align: middle;
+        }
+        .table-hover tbody tr:hover {
+            background: rgba(99, 179, 237, 0.05);
+        }
+
+        /* ── Badges ──────────────────────────────────────── */
+        .badge-connected {
+            background: rgba(40, 167, 69, 0.2);
+            color: #5dd879;
+            border: 1px solid rgba(40, 167, 69, 0.3);
+            font-weight: 500;
+        }
+        .badge-group {
+            background: rgba(108, 99, 255, 0.2);
+            color: #a5a0ff;
+            border: 1px solid rgba(108, 99, 255, 0.3);
+            font-weight: 500;
+        }
+        .badge-stopped {
+            background: rgba(220, 53, 69, 0.15);
+            color: #f77;
+            border: 1px solid rgba(220, 53, 69, 0.25);
+            font-weight: 500;
+        }
+        .badge-active-session {
+            background: rgba(40, 167, 69, 0.15);
+            color: #5dd879;
+            border: 1px solid rgba(40, 167, 69, 0.25);
+            font-weight: 500;
+        }
+
+        /* ── Code/mono text ──────────────────────────────── */
+        code {
+            color: #63b3ed;
+            background: rgba(99, 179, 237, 0.1);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.85em;
+        }
+
+        /* ── Pulse animation for the live dot ────────────── */
+        .live-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #28a745;
+            margin-right: 6px;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.4); }
+            50% { opacity: 0.7; box-shadow: 0 0 0 6px rgba(40, 167, 69, 0); }
+        }
+
+        /* ── Empty state ─────────────────────────────────── */
+        .empty-state {
+            color: #5a6577;
+            padding: 2rem;
+            text-align: center;
+        }
+        .empty-state i {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────────────────────── -->
+<div class="header-bar mb-4">
+    <div class="container d-flex justify-content-between align-items-center">
+        <div>
+            <div class="brand text-light">
+                <i class="bi bi-shield-lock-fill"></i> NACSystem
+            </div>
+            <div class="subtitle">Network Access Control &mdash; AAA Security Dashboard</div>
+        </div>
+        <div class="text-end">
+            <div class="text-light small"><span class="live-dot"></span> System Online</div>
+            <div class="subtitle">FreeRADIUS + FastAPI + PostgreSQL + Redis</div>
+        </div>
+    </div>
+</div>
+
+<div class="container pb-5">
+
+    <!-- ── Summary Cards ──────────────────────────────────── -->
+    <div class="row g-3 mb-4">
+
+        <!-- Active Sessions -->
+        <div class="col-md-3 col-6">
+            <div class="stat-card p-3 d-flex align-items-center gap-3">
+                <div class="stat-icon" style="background: rgba(40,167,69,0.15); color: #5dd879;">
+                    <i class="bi bi-wifi"></i>
+                </div>
+                <div>
+                    <div class="stat-number text-success">{{ active_count }}</div>
+                    <div class="stat-label">Active Sessions</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Registered Users -->
+        <div class="col-md-3 col-6">
+            <div class="stat-card p-3 d-flex align-items-center gap-3">
+                <div class="stat-icon" style="background: rgba(99,179,237,0.15); color: #63b3ed;">
+                    <i class="bi bi-people-fill"></i>
+                </div>
+                <div>
+                    <div class="stat-number" style="color: #63b3ed;">{{ total_users }}</div>
+                    <div class="stat-label">Registered Users</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Accounting Records -->
+        <div class="col-md-3 col-6">
+            <div class="stat-card p-3 d-flex align-items-center gap-3">
+                <div class="stat-icon" style="background: rgba(255,193,7,0.15); color: #ffc107;">
+                    <i class="bi bi-journal-text"></i>
+                </div>
+                <div>
+                    <div class="stat-number text-warning">{{ total_acct }}</div>
+                    <div class="stat-label">Acct Records</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- System Status -->
+        <div class="col-md-3 col-6">
+            <div class="stat-card p-3 d-flex align-items-center gap-3">
+                <div class="stat-icon" style="background: rgba(40,167,69,0.15); color: #5dd879;">
+                    <i class="bi bi-check-circle-fill"></i>
+                </div>
+                <div>
+                    <div class="stat-number text-success">OK</div>
+                    <div class="stat-label">System Status</div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- ── Active Sessions ────────────────────────────────── -->
+    <div class="panel p-3 mb-4">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <div class="panel-title">
+                <i class="bi bi-broadcast-pin"></i> Active Sessions
+                <span class="text-secondary small ms-2">(live from Redis)</span>
+            </div>
+            {% if sessions %}
+            <span class="badge badge-connected">
+                <span class="live-dot"></span> {{ active_count }} online
+            </span>
+            {% endif %}
+        </div>
+        {% if sessions %}
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Username</th>
+                        <th>IP Address</th>
+                        <th>MAC Address</th>
+                        <th>NAS IP</th>
+                        <th>Start Time</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for s in sessions %}
+                    <tr>
+                        <td class="text-light fw-medium">{{ s.username }}</td>
+                        <td>{{ s.framed_ip or "N/A" }}</td>
+                        <td><code>{{ s.mac or "N/A" }}</code></td>
+                        <td>{{ s.nas_ip or "N/A" }}</td>
+                        <td>{{ s.start_time }}</td>
+                        <td><span class="badge badge-connected"><i class="bi bi-circle-fill" style="font-size:0.5rem;"></i> Connected</span></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <i class="bi bi-broadcast"></i>
+            <div>No active sessions right now</div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- ── Registered Users ───────────────────────────────── -->
+    <div class="panel p-3 mb-4">
+        <div class="panel-title mb-3">
+            <i class="bi bi-person-badge"></i> Registered Users & Devices
+            <span class="text-secondary small ms-2">(from PostgreSQL)</span>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Username / MAC</th>
+                        <th>Auth Type</th>
+                        <th>Group</th>
+                        <th>VLAN</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for u in users %}
+                    <tr>
+                        <td class="text-light fw-medium">{{ u.username }}</td>
+                        <td><code>{{ u.auth_type }}</code></td>
+                        <td><span class="badge badge-group">{{ u.group or "none" }}</span></td>
+                        <td>{{ u.vlan or "N/A" }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- ── Accounting Logs ────────────────────────────────── -->
+    <div class="panel p-3 mb-4">
+        <div class="panel-title mb-3">
+            <i class="bi bi-clock-history"></i> Recent Accounting Logs
+            <span class="text-secondary small ms-2">(from PostgreSQL &mdash; last 20)</span>
+        </div>
+        {% if acct_logs %}
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Username</th>
+                        <th>Session ID</th>
+                        <th>Start Time</th>
+                        <th>Stop Time</th>
+                        <th>Duration (s)</th>
+                        <th>Terminate Cause</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for a in acct_logs %}
+                    <tr>
+                        <td class="text-light fw-medium">{{ a.username }}</td>
+                        <td><code>{{ a.session_id }}</code></td>
+                        <td>{{ a.start_time or "N/A" }}</td>
+                        <td>
+                            {% if a.stop_time %}
+                                {{ a.stop_time }}
+                            {% else %}
+                                <span class="badge badge-active-session"><i class="bi bi-circle-fill" style="font-size:0.5rem;"></i> Active</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ a.session_time or 0 }}</td>
+                        <td>
+                            {% if a.terminate_cause %}
+                                <span class="badge badge-stopped">{{ a.terminate_cause }}</span>
+                            {% else %}
+                                <span class="text-secondary">-</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <i class="bi bi-clock-history"></i>
+            <div>No accounting records yet</div>
+        </div>
+        {% endif %}
+    </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
