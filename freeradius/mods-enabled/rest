@@ -12,15 +12,17 @@ rest {
     connect_uri = "http://api:8000"
 
     # ── AUTHORIZE ────────────────────────────────────────
-    # Called when FreeRADIUS needs to know: "What policy applies to this user?"
-    # We send the username, and our API returns VLAN attributes.
+    # Called during the authorize phase to check if the user exists.
+    # We use force_to = 'plain' here because we do NOT need rlm_rest
+    # to parse the JSON body in this phase. All we care about is:
+    #   HTTP 200 = user exists (rest returns "ok")
+    #   HTTP 404 = user not found (rest returns "notfound")
     authorize {
         uri = "${..connect_uri}/authorize"
         method = 'post'
         body = 'post'
-        # Send username as a form field so our FastAPI can read it
         data = "username=%{User-Name}"
-        force_to = 'json'
+        force_to = 'plain'
     }
 
     # ── AUTHENTICATE ─────────────────────────────────────
@@ -33,6 +35,25 @@ rest {
         body = 'post'
         data = "username=%{User-Name}&password=%{User-Password}"
         force_to = 'plain'
+    }
+
+    # ── POST-AUTH ───────────────────────────────────────
+    # Called AFTER authentication succeeds. This is the KEY section.
+    # WHY: In FreeRADIUS 3.2, rlm_rest in the authorize section puts
+    # parsed JSON attributes into the control/request list — NOT the
+    # reply list. No JSON format fixes this. But in the post-auth
+    # section, rlm_rest puts parsed attributes into the REPLY list,
+    # which IS what gets sent back to the switch in the Access-Accept.
+    #
+    # Our /authorize API returns flat JSON like:
+    #   {"Tunnel-Type": "13", "Tunnel-Medium-Type": "6", "Tunnel-Private-Group-Id": "20"}
+    # rlm_rest parses these and puts them directly into the reply.
+    post-auth {
+        uri = "${..connect_uri}/authorize"
+        method = 'post'
+        body = 'post'
+        data = "username=%{User-Name}"
+        force_to = 'json'
     }
 
     # ── ACCOUNTING ───────────────────────────────────────

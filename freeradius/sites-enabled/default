@@ -3,13 +3,14 @@
 # ============================================================
 # This is a SIMPLIFIED version of the default site config.
 # We removed everything we don't need, and added the "rest"
-# module in the authorize, authenticate, and accounting sections.
+# module in the authorize, authenticate, accounting, and
+# post-auth sections.
 #
 # HOW IT WORKS (the request flow):
 #   1. A RADIUS packet arrives (e.g. from a switch)
 #   2. authorize {} runs  → figures out WHO the user is and HOW to check them
 #   3. authenticate {} runs → verifies the password
-#   4. post-auth {} runs   → final steps after auth decision
+#   4. post-auth {} runs   → final steps after auth decision (VLAN assignment!)
 #   5. accounting {} runs  → logs session start/stop (separate packets)
 # ============================================================
 
@@ -34,15 +35,24 @@ server default {
     # ════════════════════════════════════════════════════════
     # Runs BEFORE authentication. Its job is to:
     #   1. Clean up the request (preprocess)
-    #   2. Find the user's "known good" password or set Auth-Type
-    #   3. Fetch policy attributes (VLAN, etc.)
+    #   2. Check if the user exists in our database (via rest)
+    #   3. Set Auth-Type = rest so FreeRADIUS knows to use our API
+    #      for password verification
+    #
+    # NOTE: We do NOT assign VLAN attributes here. In FreeRADIUS 3.2,
+    # rlm_rest in the authorize section puts parsed JSON into the
+    # control/request list — NOT the reply list. VLAN assignment
+    # happens in the post-auth section below.
     #
     authorize {
         # Clean up weird attributes from some NAS devices
         preprocess
 
         # Call our FastAPI /authorize endpoint.
-        # This fetches the user's group and VLAN attributes.
+        # In this phase, force_to='plain' means the JSON body is IGNORED.
+        # We only care about the HTTP status code:
+        #   200 = user exists (rest returns "ok")
+        #   404 = user not found (rest returns "notfound")
         rest
 
         # If the user sent a plain-text password (PAP), and no other
@@ -100,10 +110,28 @@ server default {
     # ════════════════════════════════════════════════════════
     # POST-AUTH section
     # ════════════════════════════════════════════════════════
-    # Runs after authentication succeeds or fails.
-    # We keep it minimal — just handle session state for EAP.
+    # Runs after authentication succeeds. THIS is where VLAN
+    # attributes get assigned to the reply.
+    #
+    # WHY here and not in authorize:
+    #   In FreeRADIUS 3.2, rlm_rest behaves differently per section:
+    #     - authorize:  parsed JSON goes into control/request list
+    #     - post-auth:  parsed JSON goes into REPLY list
+    #   The reply list is what gets sent back to the switch in the
+    #   Access-Accept packet. So VLAN attributes (Tunnel-Type,
+    #   Tunnel-Medium-Type, Tunnel-Private-Group-Id) MUST be set
+    #   in post-auth for them to reach the switch.
+    #
+    # Our /authorize API returns:
+    #   {"Tunnel-Type": "13", "Tunnel-Medium-Type": "6", "Tunnel-Private-Group-Id": "20"}
+    # rlm_rest parses this JSON and puts the attributes into reply.
     #
     post-auth {
+        # Call our FastAPI /authorize endpoint with force_to='json'.
+        # rlm_rest parses the JSON response and puts attributes
+        # directly into the RADIUS reply → they appear in Access-Accept.
+        rest
+
         # Copy session-state attributes into the reply
         # (needed for multi-round EAP conversations)
         update {

@@ -18,7 +18,8 @@ Endpoints:
 import os
 import json
 import hashlib
-from datetime import datetime
+from datetime import timezone, datetime
+from urllib.parse import parse_qsl
 
 import psycopg2
 import psycopg2.extras
@@ -86,10 +87,12 @@ def normalize_mac(mac: str) -> str:
     """
     Convert any MAC address format to lowercase colon-separated.
     WHY: Different switches/APs send MACs in different formats:
+
       - Cisco:  aabb.ccdd.eeff
       - Windows: AA-BB-CC-DD-EE-FF
       - Linux:   aa:bb:cc:dd:ee:ff
       - Some:    AABBCCDDEEFF
+      
     We normalize to "aa:bb:cc:dd:ee:ff" so we can match against
     the single format stored in our database.
     """
@@ -185,31 +188,33 @@ async def authenticate(request: Request):
 @app.post("/authorize")
 async def authorize(request: Request):
     """
-    FreeRADIUS calls this BEFORE authentication to ask:
-    "Do you know this user? What policy applies to them?"
+    FreeRADIUS calls this endpoint TWICE per authentication request:
 
-    IMPORTANT — rlm_rest expects a specific JSON structure:
-      {
-        "control": { ... },   ← attributes FreeRADIUS uses internally
-        "reply":   { ... }    ← attributes sent back to the switch/AP
-      }
+    1. During AUTHORIZE phase (force_to='plain'):
+       → Just checks if user exists (HTTP 200 = yes, 404 = no)
+       → The JSON body is IGNORED in this phase
 
-    We leave "control" empty because Auth-Type is set to "rest" in
-    the FreeRADIUS site config, so /auth handles password verification.
-    VLAN attributes go in "reply" so the switch knows which VLAN to assign.
+    2. During POST-AUTH phase (force_to='json'):
+       → After successful authentication, rlm_rest parses the JSON body
+       → In post-auth, parsed attributes go directly into the REPLY list
+       → This is how VLAN attributes reach the Access-Accept packet
 
-    Flow:
-      1. Read the username from the request
-      2. Look up the user's password from radcheck
-      3. Find which group the user belongs to (radusergroup)
-      4. Fetch that group's VLAN attributes (radgroupreply)
-      5. Return everything in the rlm_rest JSON format
+    WHY two calls to the same endpoint:
+       In FreeRADIUS 3.2, rlm_rest in the authorize section puts parsed
+       JSON attributes into the control/request list — NOT the reply list.
+       No JSON format (nested, flat, prefixed) fixes this. But in the
+       post-auth section, rlm_rest puts parsed attributes into the REPLY
+       list, which IS sent to the switch. So we call the same endpoint
+       from both phases: authorize ignores the body, post-auth parses it.
     """
-    form = await request.form()
-    username = form.get("username", "")
+    # Parse the raw body ourselves instead of using request.form().
+    # WHY: rlm_rest may send different Content-Type headers depending
+    # on the force_to setting. parse_qsl works regardless of Content-Type.
+    body = (await request.body()).decode()
+    params = dict(parse_qsl(body))
+    username = params.get("username", "")
 
     # Normalize MAC addresses so MAB lookups work regardless of format
-    # WHY: A switch might send "AA-BB-CC-DD-EE-FF" but our DB stores "aa:bb:cc:dd:ee:ff"
     normalized = normalize_mac(username)
     lookup_name = normalized if normalized != username else username
 
@@ -217,15 +222,12 @@ async def authorize(request: Request):
     try:
         cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
-        # Step 1: Look up the user's password hash from radcheck
+        # Step 1: Check if user exists in radcheck
         cursor.execute(
             "SELECT attribute, value FROM radcheck WHERE username = %s",
             (lookup_name,)
         )
-        check_row = cursor.fetchone()
-
-        # If user doesn't exist, return 404 (rlm_rest maps this to "notfound")
-        if not check_row:
+        if not cursor.fetchone():
             return Response(status_code=404)
 
         # Step 2: Find the user's group
@@ -235,32 +237,20 @@ async def authorize(request: Request):
         )
         group_row = cursor.fetchone()
 
-        # Build the "control" section — tells FreeRADIUS the expected password
-        # WHY: FreeRADIUS PAP needs the "known good" password to compare against
-        # what the user submitted. We send it as Cleartext-Password because our
-        # API will handle the real hash comparison in /auth via Auth-Type = rest.
-        control = {}
-
-        # Build the "reply" section — attributes sent back to the network device
-        reply = {}
-
+        # Step 3: Get ALL VLAN attributes for this group
+        # Return them as flat JSON: {"Tunnel-Type": "13", ...}
+        # When called from post-auth, rlm_rest parses these directly
+        # into the RADIUS reply list → they appear in Access-Accept
+        attrs = {}
         if group_row:
-            groupname = group_row["groupname"]
-
-            # Step 3: Get the VLAN attributes for that group
             cursor.execute(
                 "SELECT attribute, value FROM radgroupreply WHERE groupname = %s",
-                (groupname,)
+                (group_row["groupname"],)
             )
-            for attr in cursor.fetchall():
-                reply[attr["attribute"]] = {"value": [attr["value"]], "op": ":="}
+            for row in cursor.fetchall():
+                attrs[row["attribute"]] = row["value"]
 
-        # Return the JSON structure that rlm_rest expects
-        # FreeRADIUS will parse "control" and "reply" automatically
-        return JSONResponse(content={
-            "control": control,
-            "reply": reply,
-        })
+        return JSONResponse(content=attrs)
 
     finally:
         conn.close()
@@ -313,7 +303,7 @@ async def accounting(request: Request):
     input_octets = safe_int(form.get("Acct-Input-Octets", "0"))
     output_octets = safe_int(form.get("Acct-Output-Octets", "0"))
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     # Wrap everything in try/except so we ALWAYS return 204 to FreeRADIUS.
     # WHY: If we return 500 (crash), FreeRADIUS treats it as "fail" and

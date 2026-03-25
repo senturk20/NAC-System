@@ -99,33 +99,34 @@ def test_auth_rejects_wrong_password(mock_get_db):
 @patch("main.get_db")
 def test_authorize_returns_vlan_attributes(mock_get_db):
     """
-    Test that /authorize returns the correct JSON structure
-    with VLAN attributes that rlm_rest expects.
+    Test that /authorize returns flat VLAN attributes as JSON.
 
-    Expected format:
+    WHY this format: FreeRADIUS 3.2 rlm_rest in the post-auth section
+    parses flat JSON keys directly into the RADIUS reply list. This is
+    how VLAN attributes reach the Access-Accept packet sent to the switch.
+
+    Expected response:
     {
-        "control": { ... },
-        "reply": {
-            "Tunnel-Type": {"value": ["13"], "op": ":="},
-            "Tunnel-Private-Group-Id": {"value": ["20"], "op": ":="}
-        }
+        "Tunnel-Type": "13",
+        "Tunnel-Medium-Type": "6",
+        "Tunnel-Private-Group-Id": "20"
     }
     """
     # ── Arrange: fake DB returns user + group + VLAN data ─
     fake_cursor = MagicMock()
 
-    # We need fetchone/fetchall to return different data on each call:
-    #   1st call (radcheck)     → user exists with SHA-256 password
+    # We need fetchone to return different data on each call:
+    #   1st call (radcheck)     → user exists
     #   2nd call (radusergroup) → user belongs to "employee" group
-    #   3rd call (radgroupreply) → employee group gets VLAN 20
     fake_cursor.fetchone.side_effect = [
-        # 1st fetchone: radcheck row
+        # 1st fetchone: radcheck row (user exists)
         {"attribute": "SHA-256-Password", "value": "somehash"},
         # 2nd fetchone: radusergroup row
         {"groupname": "employee"},
     ]
+
+    # fetchall returns the group's VLAN attributes
     fake_cursor.fetchall.return_value = [
-        # radgroupreply rows for the "employee" group
         {"attribute": "Tunnel-Type", "value": "13"},
         {"attribute": "Tunnel-Medium-Type", "value": "6"},
         {"attribute": "Tunnel-Private-Group-Id", "value": "20"},
@@ -145,17 +146,10 @@ def test_authorize_returns_vlan_attributes(mock_get_db):
 
     body = response.json()
 
-    # Must have "control" and "reply" keys (rlm_rest requirement)
-    assert "control" in body
-    assert "reply" in body
-
-    # The reply must contain VLAN attributes
-    reply = body["reply"]
-    assert "Tunnel-Type" in reply
-    assert "Tunnel-Private-Group-Id" in reply
-
-    # VLAN 20 for employee group
-    assert reply["Tunnel-Private-Group-Id"]["value"] == ["20"]
+    # Must contain VLAN attributes as flat JSON keys
+    assert body["Tunnel-Type"] == "13"
+    assert body["Tunnel-Medium-Type"] == "6"
+    assert body["Tunnel-Private-Group-Id"] == "20"
 
 
 # ════════════════════════════════════════════════════════════
