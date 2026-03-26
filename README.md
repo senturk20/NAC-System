@@ -159,7 +159,7 @@ Aktif oturumlari Redis'ten kontrol edin:
 curl http://localhost:8000/sessions/active
 ```
 
-## Bonus Ozellikler (+%5)
+## Ekstra Özellikler
 
 ### Izleme Paneli (Monitoring Dashboard)
 
